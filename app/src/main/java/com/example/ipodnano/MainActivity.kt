@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,8 +29,12 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Photos
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Settings
@@ -38,6 +43,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ipodnano.player.PlayerViewModel
 import com.example.ipodnano.player.Track
@@ -91,11 +98,24 @@ private fun IpodNanoApp(playerViewModel: PlayerViewModel = viewModel()) {
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher.launch(Manifest.permission.READ_MEDIA_AUDIO)
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
         } else {
             @Suppress("DEPRECATION")
-            permissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+        val hasPermission = ContextCompat.checkSelfPermission(
+            playerViewModel.getApplication(),
+            permission
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasPermission) {
+            playerViewModel.loadTracks(
+                contentResolver = playerViewModel.getApplication<Application>().contentResolver
+            )
+        } else {
+            permissionLauncher.launch(permission)
         }
     }
 
@@ -233,6 +253,8 @@ private fun NowPlayingScreen(
 ) {
     val currentTrack by playerViewModel.currentTrack.collectAsState()
     val isPlaying by playerViewModel.isPlaying.collectAsState()
+    val positionMs by playerViewModel.positionMs.collectAsState()
+    val durationMs by playerViewModel.durationMs.collectAsState()
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -264,12 +286,49 @@ private fun NowPlayingScreen(
             color = Color(0xFFB4B8C2)
         )
         Spacer(modifier = Modifier.height(16.dp))
-        Button(
-            onClick = { playerViewModel.togglePlayback() },
-            colors = ButtonDefaults.buttonColors(containerColor = accent),
-            shape = CircleShape
+        Slider(
+            value = positionMs.toFloat(),
+            onValueChange = { playerViewModel.seekTo(it.toLong()) },
+            valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(text = if (isPlaying) "Pause" else "Play", color = Color.White)
+            Text(
+                text = formatDuration(positionMs),
+                color = Color(0xFFB4B8C2),
+                style = MaterialTheme.typography.labelSmall
+            )
+            Text(
+                text = formatDuration(durationMs),
+                color = Color(0xFFB4B8C2),
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            RoundControlButton(
+                onClick = { playerViewModel.skipPrevious() },
+                icon = Icons.Default.FastRewind,
+                accent = accent,
+                contentDescription = "Anterior"
+            )
+            RoundControlButton(
+                onClick = { playerViewModel.togglePlayback() },
+                icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                accent = accent,
+                contentDescription = if (isPlaying) "Pausa" else "Reproducir"
+            )
+            RoundControlButton(
+                onClick = { playerViewModel.skipNext() },
+                icon = Icons.Default.FastForward,
+                accent = accent,
+                contentDescription = "Siguiente"
+            )
         }
     }
 }
@@ -371,4 +430,33 @@ private fun FooterHint(text: String) {
         modifier = Modifier.fillMaxWidth(),
         textAlign = TextAlign.Center
     )
+}
+
+@Composable
+private fun RoundControlButton(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    contentDescription: String
+) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(containerColor = accent),
+        shape = CircleShape,
+        modifier = Modifier.size(56.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color.White
+        )
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    if (durationMs <= 0) return "0:00"
+    val totalSeconds = durationMs / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "$minutes:${seconds.toString().padStart(2, '0')}"
 }

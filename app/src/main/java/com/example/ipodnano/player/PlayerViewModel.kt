@@ -11,7 +11,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
     private val exoPlayer = ExoPlayer.Builder(application).build()
@@ -25,14 +27,42 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
 
+    private val _positionMs = MutableStateFlow(0L)
+    val positionMs: StateFlow<Long> = _positionMs
+
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs
+
     init {
         exoPlayer.addListener(
             object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
                 }
+
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    val index = exoPlayer.currentMediaItemIndex
+                    _currentTrack.value = _tracks.value.getOrNull(index)
+                    _durationMs.value = exoPlayer.duration.coerceAtLeast(0L)
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_READY) {
+                        _durationMs.value = exoPlayer.duration.coerceAtLeast(0L)
+                    }
+                }
             }
         )
+
+        viewModelScope.launch {
+            while (isActive) {
+                _positionMs.value = exoPlayer.currentPosition.coerceAtLeast(0L)
+                if (exoPlayer.duration > 0) {
+                    _durationMs.value = exoPlayer.duration.coerceAtLeast(0L)
+                }
+                delay(500)
+            }
+        }
     }
 
     fun loadTracks(contentResolver: ContentResolver) {
@@ -80,8 +110,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playTrack(track: Track) {
+        val mediaItems = _tracks.value.map { MediaItem.fromUri(it.uri) }
+        val startIndex = _tracks.value.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         _currentTrack.value = track
-        exoPlayer.setMediaItem(MediaItem.fromUri(track.uri))
+        exoPlayer.setMediaItems(mediaItems, startIndex, 0L)
         exoPlayer.prepare()
         exoPlayer.play()
     }
@@ -92,6 +124,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             exoPlayer.play()
         }
+    }
+
+    fun skipNext() {
+        if (exoPlayer.hasNextMediaItem()) {
+            exoPlayer.seekToNextMediaItem()
+            exoPlayer.play()
+        }
+    }
+
+    fun skipPrevious() {
+        if (exoPlayer.hasPreviousMediaItem()) {
+            exoPlayer.seekToPreviousMediaItem()
+            exoPlayer.play()
+        } else {
+            exoPlayer.seekTo(0L)
+        }
+    }
+
+    fun seekTo(positionMs: Long) {
+        exoPlayer.seekTo(positionMs.coerceAtLeast(0L))
     }
 
     override fun onCleared() {
